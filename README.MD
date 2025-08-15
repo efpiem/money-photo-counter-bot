@@ -2,9 +2,7 @@
 
 Send a photo with euro coins, and the bot will detect and count them.
 
-Since the bot can make mistakes in detecting coin values,  
-if the photo contains **only coins of the same value**,  
-you can write that value in the **description/caption** of the photo.  
+Since the bot can make mistakes in detecting coin values,  if the photo contains **only coins of the same value**, you can write that value in the **description/caption** of the photo.  
 For example, for a photo of 10 cent coins, in the caption write:
 
 0.1  
