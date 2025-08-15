@@ -166,12 +166,16 @@ def draw_detections(image_path, detections):
             # Draw the label above the rectangle
             value = float(detection['class']) / 100
             label = f"{value:.2f} euro ({detection['confidence']:.2f})"
-            text_width, text_height = draw.textsize(label, font=label_font)
+            bbox = draw.textbbox((0, 0), label, font=label_font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
             draw.text((x, y - text_height), label, fill="red", font=label_font)
 
             # Draw the number in the center
             number_label = f"{total_coins + 1}"
-            number_text_width, number_text_height = draw.textsize(number_label, font=number_font)
+            bbox_number = draw.textbbox((0, 0), number_label, font=number_font)
+            number_text_width = bbox_number[2] - bbox_number[0]
+            number_text_height = bbox_number[3] - bbox_number[1]
             number_text_x = x + (width - number_text_width) / 2
             number_text_y = y + (height - number_text_height) / 2
             draw.text((number_text_x, number_text_y), number_label, fill="blue", font=number_font)
