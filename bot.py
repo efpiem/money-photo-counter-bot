@@ -4,10 +4,13 @@ from PIL import Image, ImageDraw, ImageFont
 from inference_sdk import InferenceHTTPClient
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
-import os
 from dotenv import load_dotenv
+from pathlib import Path
+import os
 
-load_dotenv()
+env_path = Path('.') / '.env'
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path)
 
 # Logging configuration
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
