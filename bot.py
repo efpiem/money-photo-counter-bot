@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 from pathlib import Path
 import uvicorn
 import os
-from flask import Flask, request
 from PIL import Image, ImageDraw, ImageFont
 from inference_sdk import InferenceHTTPClient
 from telegram import Update
@@ -35,9 +34,6 @@ CLIENT = InferenceHTTPClient(
 
 # telegram bot
 application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-
-# flask app for webhook
-app = Flask(__name__)
 
 # telegram handlers
 async def start(update: Update, context: CallbackContext) -> None:
