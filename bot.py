@@ -1,13 +1,16 @@
 import logging
 import httpx
+from dotenv import load_dotenv
+from pathlib import Path
+import uvicorn
+import os
+from flask import Flask, request
 from PIL import Image, ImageDraw, ImageFont
 from inference_sdk import InferenceHTTPClient
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
-from dotenv import load_dotenv
-from pathlib import Path
-import os
 
+# load env variables
 env_path = Path('.') / '.env'
 if env_path.exists():
     load_dotenv(dotenv_path=env_path)
@@ -17,19 +20,26 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Telegram bot token and inference client configuration
+# env variables
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 ROBOFLOW_API_KEY = os.environ.get("ROBOFLOW_API_KEY")
 ROBOFLOW_API_URL = 'https://detect.roboflow.com'
 MODEL_ID = 'euro-coin-detector/4'
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 
-# Configure the inference client
+# roboflow client
 CLIENT = InferenceHTTPClient(
     api_url=ROBOFLOW_API_URL,
     api_key=ROBOFLOW_API_KEY
 )
 
-# Function to handle /start messages
+# telegram bot
+application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+
+# flask app for webhook
+app = Flask(__name__)
+
+# telegram handlers
 async def start(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(
         "Hi! Send me a photo containing euro coins and I'll tell you how much money there is. "
@@ -38,15 +48,15 @@ async def start(update: Update, context: CallbackContext) -> None:
         "write 0.1 in the description)."
     )
 
-# Function to handle sent photos
+
 async def handle_photo(update: Update, context: CallbackContext) -> None:
-    # Send confirmation message right away
+    
     await update.message.reply_text("Image received! Processing it...")
 
     photo_file = await update.message.photo[-1].get_file()
     photo_path = f"{photo_file.file_path}"
 
-    # Extract the value from the photo description
+
     caption = update.message.caption
     custom_value = None
     if caption:
@@ -62,19 +72,19 @@ async def handle_photo(update: Update, context: CallbackContext) -> None:
         with open("photo.jpg", "wb") as f:
             f.write(photo_response.content)
 
-    # Send inference request to the coin detection model
+
     try:
         result = CLIENT.infer("photo.jpg", model_id=MODEL_ID)
         detections = result["predictions"]
         total_coins, coin_counts = draw_detections("photo.jpg", detections)
 
-        # Calculate the total value of coins (dividing by 100)
+
         total_value = sum([float(detection['class']) / 100 for detection in detections])
 
         with open("photo_with_detections.jpg", "rb") as f:
             await context.bot.send_photo(chat_id=update.effective_chat.id, photo=f)
 
-        # Format coin count per denomination
+
         coin_counts_str = "\n".join(
             [f"Coins of {value:.2f} euro detected: {count}" for value, count in sorted(coin_counts.items(), reverse=True)]
         )
@@ -85,14 +95,13 @@ async def handle_photo(update: Update, context: CallbackContext) -> None:
             f"{coin_counts_str}"
         )
 
-        # Calculate and add the estimated total if a custom value was provided
+
         if custom_value:
             estimated_total = total_coins * custom_value
             response_message += (
                 f"\n\nEstimated total with value {custom_value:.2f} euro: {estimated_total:.2f} euro"
             )
 
-        # Send message with the total coins, total number of coins, and estimated total (if applicable)
         await update.message.reply_text(response_message)
 
     except Exception as e:
@@ -101,7 +110,7 @@ async def handle_photo(update: Update, context: CallbackContext) -> None:
             'An error occurred while detecting the coins.'
         )
 
-# Function to calculate Intersection over Union (IoU)
+
 def calculate_iou(box1, box2):
     x1, y1, x2, y2 = box1
     x3, y3, x4, y4 = box2
@@ -119,86 +128,70 @@ def calculate_iou(box1, box2):
     iou = inter_area / union_area
     return iou
 
-# Function to draw detections on the image and count boxes
+
 def draw_detections(image_path, detections):
     image = Image.open(image_path)
     draw = ImageDraw.Draw(image)
-
-    # Use a system font for labels
-    label_font_size = 24
-    try:
-        label_font = ImageFont.truetype("arial.ttf", label_font_size)
-    except IOError:
-        label_font = ImageFont.load_default()
-
-    # Use a larger font for numbers
-    number_font_size = 48
-    try:
-        number_font = ImageFont.truetype("arial.ttf", number_font_size)
-    except IOError:
-        number_font = ImageFont.load_default()
+    label_font = ImageFont.load_default()
+    number_font = ImageFont.load_default()
 
     total_coins = 0
     detected_boxes = []
     coin_counts = {}
 
-    for idx, detection in enumerate(detections):
+    for detection in detections:
         x = detection["x"] - detection["width"] / 2
         y = detection["y"] - detection["height"] / 2
-        width = detection["width"]
-        height = detection["height"]
+        width, height = detection["width"], detection["height"]
         box = [x, y, x + width, y + height]
 
-        # Check for overlaps
-        overlap = False
-        for detected_box in detected_boxes:
-            iou = calculate_iou(box, detected_box)
-            if iou > 0.5:
-                overlap = True
-                break
+        if any(calculate_iou(box, b) > 0.5 for b in detected_boxes):
+            continue
+        detected_boxes.append(box)
 
-        if not overlap:
-            detected_boxes.append(box)
+        draw.rectangle(box, outline="red", width=3)
+        value = float(detection["class"]) / 100
+        label = f"{value:.2f}€ ({detection['confidence']:.2f})"
+        draw.text((x, y - 15), label, fill="red", font=label_font)
 
-            # Draw the rectangle
-            draw.rectangle(box, outline="red", width=3)
-
-            # Draw the label above the rectangle
-            value = float(detection['class']) / 100
-            label = f"{value:.2f} euro ({detection['confidence']:.2f})"
-            bbox = draw.textbbox((0, 0), label, font=label_font)
-            text_width = bbox[2] - bbox[0]
-            text_height = bbox[3] - bbox[1]
-            draw.text((x, y - text_height), label, fill="red", font=label_font)
-
-            # Draw the number in the center
-            number_label = f"{total_coins + 1}"
-            bbox_number = draw.textbbox((0, 0), number_label, font=number_font)
-            number_text_width = bbox_number[2] - bbox_number[0]
-            number_text_height = bbox_number[3] - bbox_number[1]
-            number_text_x = x + (width - number_text_width) / 2
-            number_text_y = y + (height - number_text_height) / 2
-            draw.text((number_text_x, number_text_y), number_label, fill="blue", font=number_font)
-
-            total_coins += 1
-
-            # Update coin count
-            if value in coin_counts:
-                coin_counts[value] += 1
-            else:
-                coin_counts[value] = 1
+        total_coins += 1
+        coin_counts[value] = coin_counts.get(value, 0) + 1
 
     image.save("photo_with_detections.jpg")
     return total_coins, coin_counts
 
-# Main function to start the bot
-def main() -> None:
-    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+
+# FastAPI route
+@app.post("/webhook")
+async def telegram_webhook(request: Request):
+    data = await request.json()
+    await application.update_queue.put(Update.de_json(data, application.bot))
+    return {"ok": True}
+
+
+@app.on_event("startup")
+async def on_startup():
+    
+    webhook_url = f"{WEBHOOK_URL}/webhook"
+    if not webhook_url.startswith("https://"):
+        logger.warning("Webhook must use HTTPS. Render automatically provides this.")
+    await application.bot.set_webhook(webhook_url)
+    logger.info(f"Webhook set to {webhook_url}")
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
-    application.run_polling()
+    await application.initialize()
+    await application.start()
+    logger.info("Bot is ready!")
 
-if __name__ == '__main__':
-    main()
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    await application.stop()
+    await application.shutdown()
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
