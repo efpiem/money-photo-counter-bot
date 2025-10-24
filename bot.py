@@ -8,78 +8,74 @@ from PIL import Image, ImageDraw, ImageFont
 from inference_sdk import InferenceHTTPClient
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
+from fastapi import FastAPI, Request
 
-# load env variables
+# Load environment variables
 env_path = Path('.') / '.env'
 if env_path.exists():
     load_dotenv(dotenv_path=env_path)
 
-# Logging configuration
+# Logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# env variables
+# Environment variables
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 ROBOFLOW_API_KEY = os.environ.get("ROBOFLOW_API_KEY")
 ROBOFLOW_API_URL = 'https://detect.roboflow.com'
 MODEL_ID = 'euro-coin-detector/4'
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # e.g., "https://your-app-name.onrender.com"
 
-# roboflow client
-CLIENT = InferenceHTTPClient(
-    api_url=ROBOFLOW_API_URL,
-    api_key=ROBOFLOW_API_KEY
-)
+# Roboflow client
+CLIENT = InferenceHTTPClient(api_url=ROBOFLOW_API_URL, api_key=ROBOFLOW_API_KEY)
 
-# telegram bot
+# Telegram bot application
 application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-# telegram handlers
-async def start(update: Update, context: CallbackContext) -> None:
+# FastAPI app
+app = FastAPI()
+
+
+# --- Telegram Handlers ---
+async def start(update: Update, context: CallbackContext):
     await update.message.reply_text(
         "Hi! Send me a photo containing euro coins and I'll tell you how much money there is. "
-        "Since I can make mistakes in detecting coin values, if the photo contains only coins of the same value, "
-        "you can write that value in the description of the photo (e.g., for a photo of 10 cent coins, "
-        "write 0.1 in the description)."
+        "If the photo contains only coins of the same value, you can write that value in the description (e.g., 0.1 for 10 cent coins)."
     )
 
 
-async def handle_photo(update: Update, context: CallbackContext) -> None:
-    
+async def handle_photo(update: Update, context: CallbackContext):
     await update.message.reply_text("Image received! Processing it...")
 
     photo_file = await update.message.photo[-1].get_file()
     photo_path = f"{photo_file.file_path}"
 
-
+    # Custom value from caption
     caption = update.message.caption
     custom_value = None
     if caption:
         try:
             custom_value = float(caption.strip())
         except ValueError:
-            await update.message.reply_text(
-                'Invalid value in description. Please make sure to enter a numeric value.'
-            )
+            await update.message.reply_text("Invalid value in description. Please enter a numeric value.")
 
+    # Download image
     async with httpx.AsyncClient() as client:
         photo_response = await client.get(photo_path)
         with open("photo.jpg", "wb") as f:
             f.write(photo_response.content)
 
-
     try:
+        # Run inference
         result = CLIENT.infer("photo.jpg", model_id=MODEL_ID)
         detections = result["predictions"]
         total_coins, coin_counts = draw_detections("photo.jpg", detections)
 
-
-        total_value = sum([float(detection['class']) / 100 for detection in detections])
+        total_value = sum([float(d['class']) / 100 for d in detections])
 
         with open("photo_with_detections.jpg", "rb") as f:
             await context.bot.send_photo(chat_id=update.effective_chat.id, photo=f)
-
 
         coin_counts_str = "\n".join(
             [f"Coins of {value:.2f} euro detected: {count}" for value, count in sorted(coin_counts.items(), reverse=True)]
@@ -91,38 +87,30 @@ async def handle_photo(update: Update, context: CallbackContext) -> None:
             f"{coin_counts_str}"
         )
 
-
         if custom_value:
             estimated_total = total_coins * custom_value
-            response_message += (
-                f"\n\nEstimated total with value {custom_value:.2f} euro: {estimated_total:.2f} euro"
-            )
+            response_message += f"\n\nEstimated total with value {custom_value:.2f} euro: {estimated_total:.2f} euro"
 
         await update.message.reply_text(response_message)
 
     except Exception as e:
-        logger.error(f"Error in coin detection model request: {e}")
-        await update.message.reply_text(
-            'An error occurred while detecting the coins.'
-        )
+        logger.error(f"Error in coin detection: {e}")
+        await update.message.reply_text("An error occurred while detecting the coins.")
 
 
+# --- Utility Functions ---
 def calculate_iou(box1, box2):
     x1, y1, x2, y2 = box1
     x3, y3, x4, y4 = box2
-
     xi1 = max(x1, x3)
     yi1 = max(y1, y3)
     xi2 = min(x2, x4)
     yi2 = min(y2, y4)
-
     inter_area = max(0, xi2 - xi1) * max(0, yi2 - yi1)
     box1_area = (x2 - x1) * (y2 - y1)
     box2_area = (x4 - x3) * (y4 - y3)
     union_area = box1_area + box2_area - inter_area
-
-    iou = inter_area / union_area
-    return iou
+    return inter_area / union_area
 
 
 def draw_detections(image_path, detections):
@@ -135,10 +123,10 @@ def draw_detections(image_path, detections):
     detected_boxes = []
     coin_counts = {}
 
-    for detection in detections:
-        x = detection["x"] - detection["width"] / 2
-        y = detection["y"] - detection["height"] / 2
-        width, height = detection["width"], detection["height"]
+    for d in detections:
+        x = d["x"] - d["width"] / 2
+        y = d["y"] - d["height"] / 2
+        width, height = d["width"], d["height"]
         box = [x, y, x + width, y + height]
 
         if any(calculate_iou(box, b) > 0.5 for b in detected_boxes):
@@ -146,8 +134,8 @@ def draw_detections(image_path, detections):
         detected_boxes.append(box)
 
         draw.rectangle(box, outline="red", width=3)
-        value = float(detection["class"]) / 100
-        label = f"{value:.2f}€ ({detection['confidence']:.2f})"
+        value = float(d["class"]) / 100
+        label = f"{value:.2f}€ ({d['confidence']:.2f})"
         draw.text((x, y - 15), label, fill="red", font=label_font)
 
         total_coins += 1
@@ -157,29 +145,30 @@ def draw_detections(image_path, detections):
     return total_coins, coin_counts
 
 
-# FastAPI route
+# --- FastAPI Webhook Endpoint ---
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
     data = await request.json()
-    await application.update_queue.put(Update.de_json(data, application.bot))
+    update = Update.de_json(data, application.bot)
+    await application.update_queue.put(update)
     return {"ok": True}
 
 
+# --- Startup / Shutdown Events ---
 @app.on_event("startup")
 async def on_startup():
-    
     webhook_url = f"{WEBHOOK_URL}/webhook"
     if not webhook_url.startswith("https://"):
-        logger.warning("Webhook must use HTTPS. Render automatically provides this.")
+        logger.warning("Webhook must use HTTPS. Render provides HTTPS automatically.")
     await application.bot.set_webhook(webhook_url)
-    logger.info(f"Webhook set to {webhook_url}")
+    logger.info(f"✅ Webhook set to {webhook_url}")
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     await application.initialize()
     await application.start()
-    logger.info("Bot is ready!")
+    logger.info("🤖 Bot is ready!")
 
 
 @app.on_event("shutdown")
@@ -188,6 +177,7 @@ async def on_shutdown():
     await application.shutdown()
 
 
+# --- Run Uvicorn ---
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run("main:app", host="0.0.0.0", port=port)
