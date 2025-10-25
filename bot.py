@@ -5,7 +5,6 @@ from pathlib import Path
 import uvicorn
 import os
 from PIL import Image, ImageDraw, ImageFont
-ImageFile.LOAD_TRUNCATED_IMAGES = True
 from inference_sdk import InferenceHTTPClient
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
