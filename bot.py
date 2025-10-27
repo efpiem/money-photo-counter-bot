@@ -10,12 +10,11 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
 from fastapi import FastAPI, Request
 
-# Load environment variables
+
 env_path = Path('.') / '.env'
 if env_path.exists():
     load_dotenv(dotenv_path=env_path)
 
-# Logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -25,19 +24,18 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 ROBOFLOW_API_KEY = os.environ.get("ROBOFLOW_API_KEY")
 ROBOFLOW_API_URL = 'https://detect.roboflow.com'
 MODEL_ID = 'euro-coin-detector/4'
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # e.g., "https://your-app-name.onrender.com"
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 
-# Roboflow client
+# roboflow client
 CLIENT = InferenceHTTPClient(api_url=ROBOFLOW_API_URL, api_key=ROBOFLOW_API_KEY)
 
-# Telegram bot application
+# telegram bot app
 application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-# FastAPI app
 app = FastAPI()
 
 
-# --- Telegram Handlers ---
+# telegram handlers
 async def start(update: Update, context: CallbackContext):
     await update.message.reply_text(
         "Hi! Send me a photo containing euro coins and I'll tell you how much money there is. "
@@ -46,12 +44,11 @@ async def start(update: Update, context: CallbackContext):
 
 
 async def handle_photo(update: Update, context: CallbackContext):
-    await update.message.reply_text("Image received! Processing it...")
-
+    
     photo_file = await update.message.photo[-1].get_file()
     photo_path = f"{photo_file.file_path}"
 
-    # Custom value from caption
+    # custom value from caption
     caption = update.message.caption
     custom_value = None
     if caption:
@@ -60,14 +57,14 @@ async def handle_photo(update: Update, context: CallbackContext):
         except ValueError:
             await update.message.reply_text("Invalid value in description. Please enter a numeric value.")
 
-    # Download image
+
     async with httpx.AsyncClient() as client:
         photo_response = await client.get(photo_path)
         with open("photo.jpg", "wb") as f:
             f.write(photo_response.content)
 
     try:
-        # Run inference
+        # run inference
         result = CLIENT.infer("photo.jpg", model_id=MODEL_ID)
         detections = result["predictions"]
         total_coins, coin_counts = draw_detections("photo.jpg", detections)
@@ -98,7 +95,7 @@ async def handle_photo(update: Update, context: CallbackContext):
         await update.message.reply_text("An error occurred while detecting the coins.")
 
 
-# --- Utility Functions ---
+# image processing
 def calculate_iou(box1, box2):
     x1, y1, x2, y2 = box1
     x3, y3, x4, y4 = box2
@@ -145,7 +142,7 @@ def draw_detections(image_path, detections):
     return total_coins, coin_counts
 
 
-# --- FastAPI Webhook Endpoint ---
+# fastAPI webhook endpoint
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
     data = await request.json()
@@ -154,21 +151,19 @@ async def telegram_webhook(request: Request):
     return {"ok": True}
 
 
-# --- Startup / Shutdown Events ---
+# startup and shutdown events
 @app.on_event("startup")
 async def on_startup():
     webhook_url = f"{WEBHOOK_URL}/webhook"
-    if not webhook_url.startswith("https://"):
-        logger.warning("Webhook must use HTTPS. Render provides HTTPS automatically.")
     await application.bot.set_webhook(webhook_url)
-    logger.info(f"✅ Webhook set to {webhook_url}")
+    logger.info(f"Webhook set to {webhook_url}")
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     await application.initialize()
     await application.start()
-    logger.info("🤖 Bot is ready!")
+    logger.info("Bot is ready!")
 
 
 @app.on_event("shutdown")
@@ -177,7 +172,7 @@ async def on_shutdown():
     await application.shutdown()
 
 
-# --- Run Uvicorn ---
+# run uvicorn
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run("app", host="0.0.0.0", port=port)
