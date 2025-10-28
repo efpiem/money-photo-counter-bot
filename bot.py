@@ -40,8 +40,6 @@ async def start(update: Update, context: CallbackContext):
 async def handle_photo(update: Update, context: CallbackContext):
     
     photo_file = await update.message.photo[-1].get_file()
-    # prepare optional custom value
-    custom_value = None
 
     # custom value from caption
     caption = update.message.caption
@@ -49,7 +47,7 @@ async def handle_photo(update: Update, context: CallbackContext):
         try:
             custom_value = float(caption.strip())
         except ValueError:
-            await update.message.reply_text("Invalid value in description. Please enter a numeric value.")
+            custom_value = None  # ignore non-numeric captions
 
     # download image bytes via Telegram API and preprocess
     img_bytes = await photo_file.download_as_bytearray()

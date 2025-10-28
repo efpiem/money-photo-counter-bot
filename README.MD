@@ -2,17 +2,17 @@
 
 Send a photo with euro coins and the bot will detect, annotate, and count them. If your photo contains only coins of the same value, add that value in the photo caption (for example: `0.1` for 10‑cent coins) and the bot will also estimate the total using your hint.
 
-This version serves a FastAPI app that receives Telegram webhooks and runs model inference asynchronously for better responsiveness. Images are resized and JPEG‑compressed before inference to reduce latency.
+The python script bot.py serves a FastAPI app that receives Telegram webhooks and runs Roboflow model inference asynchronously for better responsiveness. Images are resized and JPEG‑compressed before inference to reduce latency.
 
 ## Run the server
 
-Start the FastAPI app with Uvicorn (the ASGI server):
+Start the FastAPI app with Uvicorn (ASGI server):
 
 ```cmd
 uvicorn bot:app --host 0.0.0.0 --port 8000
 ```
 
-When the server starts, it will register the Telegram webhook at `WEBHOOK_URL/webhook`. Ensure `WEBHOOK_URL` is reachable by Telegram (443/80/88/8443). For local development, use a tunneling tool (e.g., `ngrok http 8000`) and set `WEBHOOK_URL` to the public tunnel URL.
+When the server starts, it will register the Telegram webhook at `WEBHOOK_URL/webhook`.
 
 ## How it works
 
@@ -24,4 +24,4 @@ When the server starts, it will register the Telegram webhook at `WEBHOOK_URL/we
 	- calls Roboflow inference in a background thread (non‑blocking),
 	- deduplicates overlapping detections (IoU > 0.5),
 	- draws boxes and labels and sends the annotated image back,
-	- reports total coins, per‑value counts, and total value (from deduplicated results).
+	- reports total coins, per‑value counts, and total value.
