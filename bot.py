@@ -43,6 +43,7 @@ async def handle_photo(update: Update, context: CallbackContext):
 
     # custom value from caption
     caption = update.message.caption
+    custom_value = None  # ensure defined even when there's no caption
     if caption:
         try:
             custom_value = float(caption.strip())
