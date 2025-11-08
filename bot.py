@@ -16,6 +16,8 @@ ROBOFLOW_API_KEY = os.environ.get("ROBOFLOW_API_KEY")
 ROBOFLOW_API_URL = os.environ.get("ROBOFLOW_API_URL")
 MODEL_ID = os.environ.get("MODEL_ID")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
+INFERENCE_CONCURRENCY = int(os.environ.get("INFERENCE_CONCURRENCY", "6"))
+INFERENCE_TIMEOUT = int(os.environ.get("INFERENCE_TIMEOUT", "30"))
 
 CLIENT = InferenceHTTPClient(api_url=ROBOFLOW_API_URL, api_key=ROBOFLOW_API_KEY)
 
@@ -23,8 +25,9 @@ application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
 app = FastAPI()
 
+inference_semaphore = asyncio.Semaphore(INFERENCE_CONCURRENCY)
 
-# basic logging
+
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -56,8 +59,12 @@ async def handle_photo(update: Update, context: CallbackContext):
     temp_input_path = _resize_and_save_temp(image)
 
     try:
-        # run inference
-        result = await asyncio.to_thread(CLIENT.infer, temp_input_path, model_id=MODEL_ID)
+        # run inference using the SDK's async API, guarded by a semaphore and timeout
+        async with inference_semaphore:
+            result = await asyncio.wait_for(
+                CLIENT.infer_async(temp_input_path, model_id=MODEL_ID),
+                timeout=INFERENCE_TIMEOUT,
+            )
         detections = result["predictions"]
         # create a temp output path for annotated image
         out_fd, out_path = tempfile.mkstemp(suffix=".jpg")
@@ -85,9 +92,13 @@ async def handle_photo(update: Update, context: CallbackContext):
 
         await update.message.reply_text(response_message)
 
+    except asyncio.TimeoutError:
+        # Inference took too long
+        logger.warning("Inference timed out for chat_id=%s", update.effective_chat.id)
+        await update.message.reply_text("Inference timed out. Please try again later.")
     except Exception as e:
         logger.exception("Error in coin detection")
-        await update.message.reply_text("Sorry, an error occurred. Try again later.")
+        await update.message.reply_text("Sorry, an error occurred. Please try again later.")
     finally:
         # cleanup temporary files
         try:
@@ -134,7 +145,7 @@ def draw_detections(image_path, detections, output_path: str | None = None):
         box = [left, top, right, bottom]
 
         # avoid detecting the same box twice, but allow detection of overlapping coins
-        if any(calculate_iou(box, b) > 0.5 for b in detected_boxes):
+        if any(calculate_iou(box, b) > 0.5 for b in detected_boxes): # 0 = no overlap, 1 = exactly the same
             continue
         else:
             detected_boxes.append(box)

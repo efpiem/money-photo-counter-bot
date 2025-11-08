@@ -21,7 +21,7 @@ When the server starts, it will register the Telegram webhook at `WEBHOOK_URL/we
 - On photo receipt, the bot:
 	- downloads the image via Telegram API to memory,
 	- resizes and compresses it (max side ~1024px) to speed up inference,
-	- calls Roboflow inference in a background thread (non‑blocking),
+	- calls Roboflow inference using the SDK's async API, guarded by concurrency limits and a timeout,
 	- deduplicates overlapping detections (IoU > 0.5),
 	- draws boxes and labels and sends the annotated image back,
 	- reports total coins, per‑value counts, and total value.
